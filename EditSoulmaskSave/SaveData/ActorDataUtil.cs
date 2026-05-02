@@ -128,6 +128,11 @@ namespace EditSoulmaskSave.SaveData
 		/// <returns>True if all actors were updated, else false. If false, logger will receive information about what went wrong.</returns>
 		public static bool UpdateActors(IEnumerable<SaveDataRow> actors, string savePath, Logger logger)
 		{
+			if (!actors.Any())
+			{
+				return true;
+			}
+
 			SqliteConnection connection = new($"Data Source={savePath}");
 			try
 			{

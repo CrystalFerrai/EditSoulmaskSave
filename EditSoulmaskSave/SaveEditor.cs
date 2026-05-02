@@ -14,6 +14,7 @@
 
 using EditSoulmaskSave.SaveData;
 using Newtonsoft.Json;
+using System.Data;
 using UeSaveGame.Json;
 
 namespace EditSoulmaskSave
@@ -147,11 +148,12 @@ namespace EditSoulmaskSave
 			{
 				if (row.Version == -131074)
 				{
-					mLogger.Information($"Fixing {row.Name}");
+					mLogger.Information($"Found potential fixable player state {row.Name}");
 
 					Stream? inData = row.Data;
 					if (inData is null)
 					{
+						mLogger.Warning($"Unable to fix player state {row.Name}. Actor data is missing or could not be loaded.");
 						row.Dispose();
 						continue;
 					}
@@ -159,6 +161,7 @@ namespace EditSoulmaskSave
 					Stream? outData = ActorDataUtil.DecompressBlob(inData, mLogger);
 					if (outData is null)
 					{
+						mLogger.Warning($"Unable to fix player state {row.Name}. Actor data could not be decompressed.");
 						row.Dispose();
 						success = false;
 						continue;
@@ -176,6 +179,21 @@ namespace EditSoulmaskSave
 					row.Dispose();
 				}
 			}
+
+			if (rows.Count == 0)
+			{
+				if (success)
+				{
+					mLogger.Information("Found no player states with the double-compression issue.");
+				}
+				else
+				{
+					mLogger.Information("No player states are able to be repaired.");
+				}
+				return success;
+			}
+
+			mLogger.Information($"Fixing {rows.Count} player state{(rows.Count != 1 ? "s" : string.Empty)}...");
 
 			bool updated = ActorDataUtil.UpdateActors(rows, savePath, mLogger);
 			return updated && success;
