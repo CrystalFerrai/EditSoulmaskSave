@@ -37,7 +37,7 @@ namespace EditSoulmaskSave
 			ProgramOptions? options;
 			if (!ProgramOptions.TryParseCommandLine(args, logger, out options))
 			{
-				ProgramOptions.PrintUsage(logger, LogLevel.Information);
+				logger.Information("To see usage information, run without any arguments.");
 				return OnExit(1);
 			}
 

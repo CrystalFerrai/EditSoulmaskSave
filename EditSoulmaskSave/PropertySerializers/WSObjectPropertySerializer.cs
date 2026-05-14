@@ -12,8 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+using EditSoulmaskSave.ObjectTypes;
+using EditSoulmaskSave.ObjectTypeSerializers;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using SoulmaskSave.PropertyTypes;
+using System.Reflection;
 using UeSaveGame;
 using UeSaveGame.Json;
 using UeSaveGame.PropertyTypes;
@@ -25,6 +29,28 @@ namespace SoulmaskSave.PropertySerializers
 	/// </summary>
 	internal class WSObjectPropertySerializer : IPropertySerializer
 	{
+		private static Dictionary<Type, Type> sCustomGameObjectSerializerMap;
+
+		private const string CustomDataName = "CustomData";
+
+		static WSObjectPropertySerializer()
+		{
+			sCustomGameObjectSerializerMap = new();
+
+			foreach (TypeInfo type in Assembly.GetExecutingAssembly().DefinedTypes)
+			{
+				if (!type.IsAssignableTo(typeof(IGameObjectSerializer)) || type.IsAbstract) continue;
+
+				foreach (GameObjectSerializerAttribute attr in type.GetCustomAttributes<GameObjectSerializerAttribute>())
+				{
+					if (!sCustomGameObjectSerializerMap.TryAdd(attr.Type, type.AsType()))
+					{
+						throw new ApplicationException($"Found multiple game object serializer implementations for the type {attr.Type.Name}");
+					}
+				}
+			}
+		}
+
 		public void ToJson(FProperty property, JsonWriter writer)
 		{
 			WSObjectProperty objectProperty = (WSObjectProperty)property;
@@ -34,7 +60,7 @@ namespace SoulmaskSave.PropertySerializers
 			writer.WritePropertyName(nameof(WSObjectProperty.ObjectFlags));
 			writer.WriteValue((byte)objectProperty.ObjectFlags);
 
-			if (objectProperty.ObjectFlags.HasFlag(WSObjectPropertyFlags.InstanceReference))
+			if (objectProperty.ObjectFlags == WSObjectPropertyFlags.HasValue || objectProperty.ObjectFlags.HasFlag(WSObjectPropertyFlags.InstanceReference))
 			{
 				writer.WritePropertyName(nameof(WSObjectProperty.ObjectPath));
 				if (objectProperty.ObjectPath is null)
@@ -50,10 +76,25 @@ namespace SoulmaskSave.PropertySerializers
 			writer.WritePropertyName(nameof(ObjectProperty.ObjectType));
 			writer.WriteFStringValue(objectProperty.ObjectType);
 			
-			if (objectProperty.ObjectFlags.HasFlag(WSObjectPropertyFlags.InstanceReference))
+			if (objectProperty.ObjectFlags.HasFlag(WSObjectPropertyFlags.InstanceReference) && !objectProperty.ObjectFlags.HasFlag(WSObjectPropertyFlags.NoData))
 			{
 				writer.WritePropertyName(nameof(WSObjectProperty.ObjectProperties));
 				PropertiesSerializer.ToJson(objectProperty.ObjectProperties, writer);
+			}
+
+			if (objectProperty.CustomGameObject is not null && sCustomGameObjectSerializerMap.TryGetValue(objectProperty.CustomGameObject.GetType(), out Type? type))
+			{
+				writer.WritePropertyName(CustomDataName);
+				writer.WriteStartObject();
+
+				writer.WritePropertyName("Type");
+				writer.WriteValue(objectProperty.CustomGameObject.GetType().FullName);
+
+				writer.WritePropertyName("Value");
+				IGameObjectSerializer serializer = (IGameObjectSerializer)Activator.CreateInstance(type)!;
+				serializer.ToJson(writer, objectProperty.CustomGameObject);
+
+				writer.WriteEndObject();
 			}
 
 			writer.WriteEndObject();
@@ -86,9 +127,61 @@ namespace SoulmaskSave.PropertySerializers
 						case nameof(WSObjectProperty.ObjectProperties):
 							objectProperty.ObjectProperties = new(PropertiesSerializer.FromJson(reader));
 							break;
+						case CustomDataName:
+							objectProperty.CustomGameObject = ReadGameObject(reader);
+							break;
 					}
 				}
 			}
+		}
+
+		private IGameObject? ReadGameObject(JsonReader reader)
+		{
+			string? typeName = null;
+			Type? type = null;
+			JToken? valueToken = null;
+
+			while (reader.Read())
+			{
+				if (reader.TokenType == JsonToken.EndObject)
+				{
+					break;
+				}
+
+				if (reader.TokenType == JsonToken.PropertyName)
+				{
+					switch (reader.Value)
+					{
+						case "Type":
+							typeName = reader.ReadAsString();
+							if (typeName is not null)
+							{
+								type = Type.GetType(typeName);
+							}
+							break;
+						case "Value":
+							if (reader.ReadAndMoveToContent())
+							{
+								valueToken = JToken.ReadFrom(reader);
+							}
+							break;
+					}
+				}
+			}
+
+			if (valueToken is null) return null;
+
+			if (type is null) throw new InvalidDataException($"Custom data type {typeName} does not exist");
+			if (!type.IsAssignableTo(typeof(IGameObject))) throw new InvalidOperationException($"Custom data type {typeName} is not an IGameObject");
+
+			if (!sCustomGameObjectSerializerMap.TryGetValue(type, out Type? serializerType))
+			{
+				throw new InvalidOperationException($"Custom data type {typeName} has no serializer");
+			}
+
+			IGameObjectSerializer serializer = (IGameObjectSerializer)Activator.CreateInstance(serializerType)!;
+			using JTokenReader valueReader = new(valueToken);
+			return serializer.FromJson(valueReader);
 		}
 	}
 }

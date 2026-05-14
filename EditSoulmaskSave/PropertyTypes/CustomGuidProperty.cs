@@ -17,11 +17,11 @@ using UeSaveGame.StructData;
 namespace EditSoulmaskSave.PropertyTypes
 {
 	/// <summary>
-	/// Defines the struct type for the property HPlayerState.TouKaoZuRenUniqueMap
+	/// Defines the struct type for map properties that have guids for values
 	/// </summary>
-	internal class TouKaoZuRenUniqueMap : GuidStruct
+	internal class CustomGuidProperty : GuidStruct
 	{
-		public override ISet<string>? KnownPropertyNames => new HashSet<string>() { "TouKaoZuRenUniqueMap" };
+		public override ISet<string>? KnownPropertyNames => new HashSet<string>() { "PlayerGongHuiMap", "TouKaoZuRenUniqueMap" };
 
 		public override IEnumerable<string> StructTypes { get { yield break; } }
 	}

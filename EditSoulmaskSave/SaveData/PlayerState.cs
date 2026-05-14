@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+using System.Diagnostics;
 using UeSaveGame;
 using UeSaveGame.PropertyTypes;
 
@@ -57,8 +58,8 @@ namespace EditSoulmaskSave.SaveData
 
 		public static PlayerState? Load(SaveDataRow saveData, Logger logger)
 		{
-			FPropertyTag[]? properties = ActorDataUtil.ReadActorData(saveData, logger);
-			if (properties is null)
+			GameActor? actor = ActorDataUtil.ReadActorData(saveData, logger) as GameActor;
+			if (actor is null)
 			{
 				// ReadBlob logs its own error message, so don't need one here
 				return null;
@@ -70,7 +71,7 @@ namespace EditSoulmaskSave.SaveData
 			string? playerName = null;
 			int? latestServerId = null;
 			string? latestServerName = null;
-			foreach (FPropertyTag property in properties)
+			foreach (FPropertyTag property in actor.Properties)
 			{
 				switch (property.Name.Value)
 				{
@@ -86,7 +87,7 @@ namespace EditSoulmaskSave.SaveData
 				}
 			}
 
-			return new(properties.ToList(), accountId, playerName, lastPlayed, latestServerId, latestServerName);
+			return new(actor.Properties.ToList(), accountId, playerName, lastPlayed, latestServerId, latestServerName);
 		}
 	}
 }

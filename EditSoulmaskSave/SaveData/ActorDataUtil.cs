@@ -28,7 +28,7 @@ namespace EditSoulmaskSave.SaveData
 	/// </summary>
 	internal static class ActorDataUtil
 	{
-		private static PackageVersion sPackageVersion;
+		public static PackageVersion UEPackageVersion { get; }
 
 		/// <summary>
 		/// The currently known/supported data version that appears in actor_data blobs.
@@ -40,20 +40,17 @@ namespace EditSoulmaskSave.SaveData
 
 		static ActorDataUtil()
 		{
-			sPackageVersion = new()
+			UEPackageVersion = new()
 			{
 				PackageVersionUE4 = EObjectUE4Version.VER_UE4_CORRECT_LICENSEE_FLAG
 			};
-
-			FProperty.RegisterPropertyType(nameof(ObjectProperty), typeof(WSObjectProperty));
-			PropertiesSerializer.RegisterPropertySerializer(nameof(ObjectProperty), new WSObjectPropertySerializer());
 		}
 
 		/// <summary>
 		/// Get all actor records of the specified actor type
 		/// </summary>
 		/// <param name="savePath">The path to the save file to read</param>
-		/// <param name="actorClass">The actor class to get instances of</param>
+		/// <param name="actorClass">The actor class to get instances of, or null to get all actors</param>
 		/// <param name="logger">For logging issues</param>
 		/// <returns>The found actors. Note that these objects should be disposed when no longer needed.</returns>
 		public static IEnumerable<SaveDataRow> GetActors(string savePath, string? actorClass, Logger logger)
@@ -62,8 +59,12 @@ namespace EditSoulmaskSave.SaveData
 			connection.Open();
 
 			SqliteCommand command = connection.CreateCommand();
-			command.CommandText = "select actor_serial, server_id, data_version, actor_name, actor_level, actor_script, actor_owner, actor_transf, actor_data, actor_time from actor_table where actor_script = $cls";
-			command.Parameters.AddWithValue("$cls", actorClass);
+			command.CommandText = "select actor_serial, server_id, data_version, actor_name, actor_level, actor_script, actor_owner, actor_transf, actor_data, actor_time from actor_table";
+			if (actorClass is not null)
+			{
+				command.CommandText += " where actor_script = $cls";
+				command.Parameters.AddWithValue("$cls", actorClass);
+			}
 
 			SqliteDataReader reader = command.ExecuteReader();
 			while (reader.Read())
@@ -76,7 +77,7 @@ namespace EditSoulmaskSave.SaveData
 				string script = reader.GetString(5);
 				string? owner = reader.GetString(6);
 				string? transformStr = reader.GetString(7);
-				using Stream? compressedData = reader.GetStream(8);
+				Stream? compressedData = reader.GetStream(8);
 				string? timeStr = reader.GetString(9);
 
 				LinearTransform? transform = null;
@@ -88,8 +89,7 @@ namespace EditSoulmaskSave.SaveData
 					}
 					else
 					{
-						logger.Warning($"Failed to parse transform for actor {serial}. Skipping actor.");
-						continue;
+						transform = null;
 					}
 				}
 
@@ -102,15 +102,22 @@ namespace EditSoulmaskSave.SaveData
 					}
 					else
 					{
-						logger.Warning($"Failed to parse time for actor {serial}. Skipping actor.");
-						continue;
+						time = null;
 					}
 				}
 
 				Stream? data = null;
 				if (compressedData is not null)
 				{
-					data = DecompressBlob(compressedData, logger);
+					if (name.Equals("GAME_SETTINGS"))
+					{
+						data = compressedData;
+					}
+					else
+					{
+						data = DecompressBlob(serial, compressedData, logger);
+						compressedData.Dispose();
+					}
 				}
 
 				yield return new(serial, serverId, version, name, level, script, owner, transform, data, time);
@@ -158,7 +165,12 @@ namespace EditSoulmaskSave.SaveData
 					byte[]? data = null;
 					if (actor.Data is not null)
 					{
-						dataStream = CompressBlob(actor.Data, logger);
+						if (actor.Name.Equals("GAME_SETTINGS"))
+						{
+							data = new byte[actor.Data.Length];
+							actor.Data.Read(data, 0, data.Length);
+						}
+						dataStream = CompressBlob(actor.Serial, actor.Data, logger);
 						if (dataStream is not null)
 						{
 							data = new byte[dataStream.Length];
@@ -218,7 +230,7 @@ namespace EditSoulmaskSave.SaveData
 		/// <param name="row">The record to read</param>
 		/// <param name="logger">For logging issues</param>
 		/// <returns>A list of actor properties, or null if there was an error</returns>
-		public static FPropertyTag[]? ReadActorData(SaveDataRow row, Logger logger)
+		public static GameActorBase? ReadActorData(SaveDataRow row, Logger logger)
 		{
 			if (row.Data is null)
 			{
@@ -238,7 +250,7 @@ namespace EditSoulmaskSave.SaveData
 				try
 				{
 					// Need to enumerate result now so that it is safe to dispose of the data stream. Using ToArray() for this
-					return UeSaveGame.Util.PropertySerializationHelper.ReadProperties(reader, sPackageVersion, true).ToArray();
+					return UeSaveGame.Util.PropertySerializationHelper.ReadProperties(reader, UEPackageVersion, true).ToArray();
 				}
 				catch (Exception ex)
 				{
@@ -253,13 +265,14 @@ namespace EditSoulmaskSave.SaveData
 			if (row.Version == -131074)
 			{
 				// This is a rare case that has come up due to some bug in the game server software
-				using Stream? stream = DecompressBlob(row.Data, logger);
+				using Stream? stream = DecompressBlob(row.Serial, row.Data, logger);
 				if (stream is not null)
 				{
 					logger.Warning($"[{row.Name}] Actor data is double compressed and will not be readable by the game.");
 
 					using BinaryReader newReader = new(stream, Encoding.ASCII, true);
-					return tryRead(newReader);
+					FPropertyTag[]? newProperties = tryRead(newReader);
+					return newProperties is null ? null : new GameActor(newProperties);
 				}
 
 				row.Data.Seek(streamPosition, SeekOrigin.Begin);
@@ -269,8 +282,14 @@ namespace EditSoulmaskSave.SaveData
 				logger.Warning($"[{row.Name}] Unrecognized actor version {row.Version}");
 			}
 
+			if (row.Name.Equals("GAME_SETTINGS"))
+			{
+				return GameSettings.Load(row, logger);
+			}
+
 			using BinaryReader reader = new(row.Data, Encoding.ASCII, true);
-			return tryRead(reader);
+			FPropertyTag[]? properties = tryRead(reader);
+			return properties is null ? null : new GameActor(properties);
 		}
 
 		/// <summary>
@@ -280,28 +299,40 @@ namespace EditSoulmaskSave.SaveData
 		/// If successful, the actor's Data property will be set to a enw stream, and the previous stream will be disposed.
 		/// </remarks>
 		/// <param name="row">The record to modify</param>
-		/// <param name="properties">The properties to set</param>
+		/// <param name="actor">The actor to write</param>
 		/// <param name="logger">For logging issues</param>
 		/// <returns>True if the actor was updated, else false. If false, logger will receive information about what went wrong.</returns>
-		public static bool WriteActorData(SaveDataRow row, IEnumerable<FPropertyTag> properties, Logger logger)
+		public static bool WriteActorData(SaveDataRow row, GameActorBase actor, Logger logger)
 		{
-			MemoryStream stream = new();
-			using BinaryWriter writer = new(stream, Encoding.ASCII, true);
-
-			writer.Write(DataVersion);
-			try
+			if (actor is GameSettings gameSettings)
 			{
-				UeSaveGame.Util.PropertySerializationHelper.WriteProperties(properties, writer, sPackageVersion, true);
-				stream.Seek(0, SeekOrigin.Begin);
-				row.Data = stream;
-			}
-			catch (Exception ex)
-			{
-				logger.Error($"[{row.Name}] Error writing actor data. [{ex.GetType().FullName}] {ex.Message}");
-				return false;
+				gameSettings.Save(row, logger);
+				return true;
 			}
 
-			return true;
+			if (actor is GameActor gameActor)
+			{
+				MemoryStream stream = new();
+				using BinaryWriter writer = new(stream, Encoding.ASCII, true);
+
+				writer.Write(DataVersion);
+				try
+				{
+					UeSaveGame.Util.PropertySerializationHelper.WriteProperties(gameActor.Properties, writer, UEPackageVersion, true);
+					stream.Seek(0, SeekOrigin.Begin);
+					row.Data = stream;
+				}
+				catch (Exception ex)
+				{
+					logger.Error($"[{row.Name}] Error writing actor data. [{ex.GetType().FullName}] {ex.Message}");
+					return false;
+				}
+
+				return true;
+			}
+
+			logger.Error($"Unknown actor class");
+			return false;
 		}
 
 		/// <summary>
@@ -310,14 +341,14 @@ namespace EditSoulmaskSave.SaveData
 		/// <param name="blob">The data to decompress</param>
 		/// <param name="logger">For logging issues</param>
 		/// <returns>A stream containing the decompressed data, or null if there was an error</returns>
-		public static Stream? DecompressBlob(Stream blob, Logger logger)
+		public static Stream? DecompressBlob(int actorIndex, Stream blob, Logger logger)
 		{
 			using BinaryReader blobReader = new(blob, Encoding.ASCII, true);
 
 			int version = blobReader.ReadInt32();
 			if (version != DataVersion)
 			{
-				logger.Error($"Unexpected version: {version}");
+				logger.Error($"Actor {actorIndex}: Unexpected version: {version}");
 				return null;
 			}
 
@@ -330,7 +361,7 @@ namespace EditSoulmaskSave.SaveData
 			}
 			catch (Exception ex)
 			{
-				logger.Error($"Decompression failed: {ex.Message}");
+				logger.Error($"Actor {actorIndex}: Decompression failed: {ex.Message}");
 				dataStream.Dispose();
 				return null;
 			}
@@ -345,7 +376,7 @@ namespace EditSoulmaskSave.SaveData
 		/// <param name="blob">The data to compress</param>
 		/// <param name="logger">For logging issues</param>
 		/// <returns>A stream containing the compressed data, or null if there was an error</returns>
-		public static Stream? CompressBlob(Stream blob, Logger logger)
+		public static Stream? CompressBlob(int actorIndex, Stream blob, Logger logger)
 		{
 			MemoryStream outStream = new();
 			using BinaryWriter writer = new(outStream, Encoding.ASCII, true);
@@ -364,7 +395,7 @@ namespace EditSoulmaskSave.SaveData
 			}
 			catch (Exception ex)
 			{
-				logger.Error($"Compression failed: {ex.Message}");
+				logger.Error($"Actor {actorIndex}: Compression failed: {ex.Message}");
 				outStream.Dispose();
 				return null;
 			}

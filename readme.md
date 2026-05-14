@@ -14,23 +14,48 @@ This program can be used on `world.db` or `account.db` save files. See actions l
 
 Run the program with no parameters to print the usage.
 ```
-Usage: EditSoulmaskSave [save file path] [action [options]]
+Performs actions on or related to Soulmask save files.
+Usage: EditSoulmaskSave [action [options]] [[additional actions]]
 
-  [save file path]  Path to a save file (world.db, account.db, etc.)
+Notes
+
+  1. One or more actions must be specified as parameters. Actions will be run
+     in the order they are specified.
+
+  2. Actions requiring a [save] paramter should be given a path to a Soulmask
+     save file such as world.db, account.db, etc.
+
+  3. Actions requiring [in] or [out] paramters should be given paths to files
+     or directories as indicated by the action.
 
 Actions
 
-  --list-players             Prints details about player accounts.
+  --list-players [save]          Prints details about player accounts.
 
-  --dump-players [dir]       Dumps all player state actors as json to the
-                             specified directory.
+  --export-players [save] [out]  Exports all player state actors as json to the
+                                 specified directory.
 
-  --dump-player-blobs [dir]  Decompresses and dumps all player state actor
-                             blobs as raw binary to the specified directory.
+  --export-all [save] [out]      Exports all actors as json to the specified
+                                 directory.
 
-  --fix-double-compress      Attempts to fix player accounts that have double
-                             compressed actor data due to connecting to a
-                             cluster with mismatched server versions.
+  --fix-double-compress [save]   Attempts to fix player accounts that have
+                                 double compressed actor data due to connecting
+                                 to a cluster with mismatched server versions.
+
+Debug/Test Actions
+
+  --dump-player-blobs [save] [out]  Decompresses and dumps all player state
+                                    actor blobs as raw binary to the specified
+                                    directory.
+
+  --dump-all-blobs [save] [out]     Decompresses and dumps all actor blobs as
+                                    raw binary to the specified directory.
+
+  --blobs-to-json [in] [out]        Convert a directory of binary actor blobs
+                                    to json.
+
+  --json-to-blobs [in] [out]        Convert a directory of json actor blobs to
+                                    binary.
 ```
 
 ## Building

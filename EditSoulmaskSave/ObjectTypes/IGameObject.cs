@@ -12,17 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-using UeSaveGame.Json.StructDataSerializers;
-
-namespace EditSoulmaskSave.PropertySerializers
+namespace EditSoulmaskSave.ObjectTypes
 {
 	/// <summary>
-	/// Custom serializer for the property HPlayerState.TouKaoZuRenUniqueMap
+	/// Interface for serializable custom game data attached to actors
 	/// </summary>
-	internal class TouKaoZuRenUniqueMapSerializer : GuidStructSerializer
+	internal interface IGameObject
 	{
-		public override ISet<string>? KnownPropertyNames => new HashSet<string>() { "TouKaoZuRenUniqueMap" };
+		void Deserialize(BinaryReader reader);
 
-		public override IEnumerable<string> StructTypes { get { yield break; } }
+		int Serialize(BinaryWriter writer);
+	}
+
+	/// <summary>
+	/// Attach to IGameObject implementations to specify object types which contain
+	/// custom data the implementation is able to serialize.
+	/// </summary>
+	[AttributeUsage(AttributeTargets.Class, AllowMultiple = true)]
+	internal class GameObjectAttribute : Attribute
+	{
+		public string TypeName { get; }
+
+		public GameObjectAttribute(string typeName)
+		{
+			TypeName = typeName;
+		}
 	}
 }

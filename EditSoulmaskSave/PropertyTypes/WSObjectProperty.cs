@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+using EditSoulmaskSave.ObjectTypes;
+using System.Reflection;
 using UeSaveGame;
 using UeSaveGame.PropertyTypes;
 using UeSaveGame.Util;
@@ -23,11 +25,32 @@ namespace SoulmaskSave.PropertyTypes
 	/// </summary>
 	internal class WSObjectProperty : ObjectProperty
 	{
+		private static Dictionary<string, Type> sCustomGameObjects;
+
 		public WSObjectPropertyFlags ObjectFlags;
 
 		public FString? ObjectPath;
 
 		public List<FPropertyTag>? ObjectProperties;
+
+		public IGameObject? CustomGameObject;
+
+		static WSObjectProperty()
+		{
+			sCustomGameObjects = new();
+			foreach (TypeInfo type in Assembly.GetExecutingAssembly().DefinedTypes)
+			{
+				if (!type.IsAssignableTo(typeof(IGameObject)) || type.IsAbstract) continue;
+
+				foreach (GameObjectAttribute attr in type.GetCustomAttributes<GameObjectAttribute>())
+				{
+					if (!sCustomGameObjects.TryAdd(attr.TypeName, type.AsType()))
+					{
+						throw new ApplicationException($"Found multiple game object implementations for the type {attr.TypeName}");
+					}
+				}
+			}
+		}
 
 		public WSObjectProperty(FString name)
 			: base(name)
@@ -40,9 +63,15 @@ namespace SoulmaskSave.PropertyTypes
 
 			ObjectFlags = (WSObjectPropertyFlags)reader.ReadByte();
 
-			if (ObjectFlags == WSObjectPropertyFlags.None) return;
+			if (ObjectFlags == WSObjectPropertyFlags.Null) return;
 
-			if (ObjectFlags.HasFlag(WSObjectPropertyFlags.InstanceReference))
+			if (ObjectFlags == WSObjectPropertyFlags.HasValue)
+			{
+				int unknown = reader.ReadInt32();
+				if (unknown != 1) throw new NotImplementedException("Unrecognized value");
+			}
+
+			if (ObjectFlags == WSObjectPropertyFlags.HasValue || ObjectFlags.HasFlag(WSObjectPropertyFlags.InstanceReference))
 			{
 				ObjectPath = reader.ReadUnrealString();
 			}
@@ -52,6 +81,12 @@ namespace SoulmaskSave.PropertyTypes
 			if (ObjectFlags.HasFlag(WSObjectPropertyFlags.InstanceReference) && !ObjectFlags.HasFlag(WSObjectPropertyFlags.NoData))
 			{
 				ObjectProperties = new(PropertySerializationHelper.ReadProperties(reader, packageVersion, true));
+			}
+
+			if (ObjectType is not null && sCustomGameObjects.TryGetValue(ObjectType.Value, out Type? type))
+			{
+				CustomGameObject = (IGameObject)Activator.CreateInstance(type)!;
+				CustomGameObject.Deserialize(reader);
 			}
 
 			ValidateObjectFlags(flagPosition);
@@ -65,7 +100,14 @@ namespace SoulmaskSave.PropertyTypes
 
 			writer.Write((byte)ObjectFlags);
 
-			if (ObjectFlags.HasFlag(WSObjectPropertyFlags.InstanceReference))
+			if (ObjectFlags == WSObjectPropertyFlags.Null) return 1;
+
+			if (ObjectFlags == WSObjectPropertyFlags.HasValue)
+			{
+				writer.Write(1);
+			}
+
+			if (ObjectFlags == WSObjectPropertyFlags.HasValue || ObjectFlags.HasFlag(WSObjectPropertyFlags.InstanceReference))
 			{
 				writer.WriteUnrealString(ObjectPath);
 			}
@@ -81,6 +123,11 @@ namespace SoulmaskSave.PropertyTypes
 				PropertySerializationHelper.WriteProperties(ObjectProperties, writer, packageVersion, true);
 			}
 
+			if (CustomGameObject is not null)
+			{
+				CustomGameObject.Serialize(writer);
+			}
+
 			return (int)(writer.BaseStream.Position - flagPosition);
 		}
 
@@ -88,10 +135,10 @@ namespace SoulmaskSave.PropertyTypes
 		{
 			// Check if there are any flags we have not previously seen in data
 			int remainingFlags = (byte)ObjectFlags & ~(byte)(
-				WSObjectPropertyFlags.Unknown1 |
+				WSObjectPropertyFlags.HasValue |
 				WSObjectPropertyFlags.InstanceReference |
 				WSObjectPropertyFlags.NoData |
-				WSObjectPropertyFlags.Unknown8);
+				WSObjectPropertyFlags.Class);
 			if (remainingFlags != 0)
 			{
 				throw new NotImplementedException($"ObjectProperty unknown flags {(byte)ObjectFlags} at {flagPosition}");
@@ -102,9 +149,9 @@ namespace SoulmaskSave.PropertyTypes
 	[Flags]
 	internal enum WSObjectPropertyFlags : byte
 	{
-		None = 0x00,
+		Null = 0x00,
 
-		Unknown1 = 0x01,
+		HasValue = 0x01,
 
 		// References a specific object instance and contains properties unless the NoData flag is also present.
 		InstanceReference = 0x02,
@@ -112,6 +159,7 @@ namespace SoulmaskSave.PropertyTypes
 		// Have only seen this when InstanceReference is also set. Indicates there are no properties stored.
 		NoData = 0x04,
 
-		Unknown8 = 0x08
+		// TSubclassOf<>
+		Class = 0x08
 	}
 }
