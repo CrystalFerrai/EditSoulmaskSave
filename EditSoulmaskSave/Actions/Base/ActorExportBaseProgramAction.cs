@@ -14,6 +14,7 @@
 
 using EditSoulmaskSave.SaveData;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using UeSaveGame.Json;
 
 namespace EditSoulmaskSave.Actions.Base
@@ -52,7 +53,7 @@ namespace EditSoulmaskSave.Actions.Base
 			foreach (SaveDataRow row in ActorDataUtil.GetActors(SavePath, actorClass, logger))
 			{
 				string name = row.Name.Substring(row.Name.LastIndexOf(':') + 1);
-				logger.Debug($"{row.Serial}_{name}");
+				//logger.Debug($"{row.Serial}_{name}");
 
 				GameActorBase? actor = ActorDataUtil.ReadActorData(row, logger);
 				if (actor is null)
@@ -89,7 +90,9 @@ namespace EditSoulmaskSave.Actions.Base
 			jsonWriter.WritePropertyName("Data");
 			if (actor is GameSettings gameSettings)
 			{
-				jsonWriter.WriteRaw(gameSettings.Data);
+				JToken data = JToken.Parse(gameSettings.Data);
+				using JsonReader dataReader = data.CreateReader();
+				jsonWriter.WriteToken(dataReader);
 			}
 			else if (actor is GameActor gameActor)
 			{

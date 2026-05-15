@@ -262,29 +262,31 @@ namespace EditSoulmaskSave.SaveData
 
 			long streamPosition = row.Data.Position;
 
-			if (row.Version == -131074)
-			{
-				// This is a rare case that has come up due to some bug in the game server software
-				using Stream? stream = DecompressBlob(row.Serial, row.Data, logger);
-				if (stream is not null)
-				{
-					logger.Warning($"[{row.Name}] Actor data is double compressed and will not be readable by the game.");
-
-					using BinaryReader newReader = new(stream, Encoding.ASCII, true);
-					FPropertyTag[]? newProperties = tryRead(newReader);
-					return newProperties is null ? null : new GameActor(newProperties);
-				}
-
-				row.Data.Seek(streamPosition, SeekOrigin.Begin);
-			}
-			else if (row.Version != -DataVersion)
-			{
-				logger.Warning($"[{row.Name}] Unrecognized actor version {row.Version}");
-			}
-
 			if (row.Name.Equals("GAME_SETTINGS"))
 			{
 				return GameSettings.Load(row, logger);
+			}
+			else
+			{
+				if (row.Version == -131074)
+				{
+					// This is a rare case that has come up due to some bug in the game server software
+					using Stream? stream = DecompressBlob(row.Serial, row.Data, logger);
+					if (stream is not null)
+					{
+						logger.Warning($"[{row.Name}] Actor data is double compressed and will not be readable by the game.");
+
+						using BinaryReader newReader = new(stream, Encoding.ASCII, true);
+						FPropertyTag[]? newProperties = tryRead(newReader);
+						return newProperties is null ? null : new GameActor(newProperties);
+					}
+
+					row.Data.Seek(streamPosition, SeekOrigin.Begin);
+				}
+				else if (row.Version != -DataVersion)
+				{
+					logger.Warning($"[{row.Name}] Unrecognized actor version {row.Version}");
+				}
 			}
 
 			using BinaryReader reader = new(row.Data, Encoding.ASCII, true);

@@ -162,7 +162,7 @@ namespace EditSoulmaskSave
 					{
 						if (ParseArguments(args, ref argIndex, out string? param1, out string? param2))
 						{
-							action = new ExportPlayersProgramAction(param1, param2);
+							action = new ExportAllProgramAction(param1, param2);
 						}
 						break;
 					}
